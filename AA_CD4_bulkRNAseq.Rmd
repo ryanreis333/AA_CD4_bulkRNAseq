@@ -1,0 +1,1006 @@
+---
+title: "AA_CD4_bulkRNAseq"
+output: html_document
+date: "2024-01-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+renv::init()
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("DESeq2")
+install.packages("dplyr")
+install.packages("ggplot2")
+install.packages("ggrepel")
+install.packages("pheatmap")
+install.packages("RColorBrewer")
+install.packages("circlize")
+BiocManager::install("ComplexHeatmap")
+BiocManager::install("clusterProfiler")
+BiocManager::install("enrichplot")
+BiocManager::install("org.Mm.eg.db")
+BiocManager::install("EnhancedVolcano")
+install.packages("ggbiplot")
+install.packages("rlang")
+install.packages("usethis")
+```
+
+
+```{r}
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(DESeq2))
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(ggrepel))
+suppressPackageStartupMessages(library(pheatmap))
+suppressPackageStartupMessages(library(RColorBrewer))
+suppressPackageStartupMessages(library(circlize))
+suppressPackageStartupMessages(library(ComplexHeatmap))
+suppressPackageStartupMessages(library(clusterProfiler))
+suppressPackageStartupMessages(library(enrichplot))
+suppressPackageStartupMessages(library(org.Mm.eg.db))
+suppressPackageStartupMessages(library(EnhancedVolcano))
+suppressPackageStartupMessages(library(ggbiplot))
+```
+
+
+
+```{R eval=TRUE}
+###############################################################################
+#     START ANALYSIS IN R
+###############################################################################
+sampletable <- read.table("counts_star/AA_Sample_Sheet.txt", header=T, sep="\t")
+
+rownames(sampletable) <- sampletable$SampleName
+
+count1 <- read.delim("counts_star/AA_1_raw_counts_exp_matrix.txt", header=T, sep="\t", row.names=1)
+count2 <- read.delim("counts_star/AA_2_raw_counts_exp_matrix.txt", header=T, sep="\t", row.names=1)
+count3 <- read.delim("counts_star/AA_3_raw_counts_exp_matrix.txt", header=T, sep="\t", row.names=1)
+count4 <- read.delim("counts_star/AA_4_raw_counts_exp_matrix.txt", header=T, sep="\t", row.names=1)
+count5 <- read.delim("counts_star/UA_1_raw_counts_exp_matrix.txt", header=T, sep="\t", row.names=1)
+count6 <- read.delim("counts_star/UA_2_raw_counts_exp_matrix.txt", header=T, sep="\t", row.names=1)
+count7 <- read.delim("counts_star/UA_3_raw_counts_exp_matrix.txt", header=T, sep="\t", row.names=1)
+count8 <- read.delim("counts_star/UA_4_raw_counts_exp_matrix.txt", header=T, sep="\t", row.names=1)
+
+count1$X=NULL
+count2$X=NULL
+count3$X=NULL
+count4$X=NULL
+count5$X=NULL
+count6$X=NULL
+count7$X=NULL
+count8$X=NULL
+
+matrix <- cbind(count1, count2, count3, count4, count5, count6, count7, count8)
+summary(rowSums(matrix))
+matrix <- matrix[which(rowSums(matrix) >30),]
+# Assuming 'matrix' is your actual matrix variable
+matrix$zeros <- apply(matrix, 1, function(row) sum(row == 0))
+matrix <- subset(matrix, zeros < 6)
+matrix$zeros <- NULL
+Counts <- matrix
+
+condition <- factor(c("AA","AA","AA","AA","UA","UA","UA","UA"))
+
+coldata <- data.frame(row.names = colnames(Counts), condition)
+
+tx2gene <- read.table("counts_star/tx2gene.gencode.vM30.csv",
+		sep="\t",
+		header=F)
+
+Counts_symbols <- merge(unique(tx2gene[,2:3]), data.frame(ID=rownames(Counts), Counts), by=1, all=F)
+
+write.table(Counts_symbols, "normalized.named.counts.txt", quote=F, col.names=T, row.names=F, sep="\t")
+
+
+Counts_symbols <- Counts_symbols[,-1]
+# Group the dataframe by the "V3" column and summarize
+result <- Counts_symbols %>%
+  group_by(V3) %>%
+  summarise_all(~sum(., na.rm = TRUE)) %>%
+  ungroup()
+
+result <- as.data.frame(result)
+
+# If you want to reset row names, you can do this:
+row.names(result) <- result$V3
+result <- result[,-1]
+
+Counts <- result
+
+rm(count1, count2, count3, count4, count5, count6, count7, count8, Counts_symbols, matrix, result, sampletable, tx2gene)
+
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = Counts, colData = coldata, design = ~condition)
+
+dds <- DESeq(dds)
+
+res <- results(object = dds, contrast = c("condition", "AA", "UA"))
+res.table <- as.data.frame(res@listData)
+rownames(res.table) <- res@rownames
+res.table$gene <- rownames(res.table)
+
+res.table <- res.table[order(-res.table$stat),]
+
+vsdata <- vst(dds, blind = FALSE)
+res.vst.table <- vsdata@assays@data@listData[[1]]
+
+plotPCA(object = vsdata)
+
+plotPCA(object = vsdata) + stat_ellipse(level = .95)
+ggsave("figs/pca.elipse.95.png", height = 6, width = 9)
+plotDispEsts(dds)
+
+?stat_ellipse
+
+vst.Counts <- res.vst.table
+sigs <- subset(res.table, padj < 0.05)
+#sigs <- res.table[res.table$padj < 0.05,]
+
+
+rm(res.vst.table)
+
+dataPCA <- prcomp(t(vsdata@assays@data@listData[[1]]))
+ggbiplot(dataPCA, obs.scale = 1, var.scale = 1, ellipse = TRUE, circle = TRUE)
+g <- g + scale_color_discrete(name = '')
+g <- g + theme(legend.direction = 'horizontal', legend.position = 'top')
+print(g)
+
+
+```
+
+```{r}
+rv <- as.data.frame(pca[["plot_env"]][["rv"]])
+rv$gene <- rownames(rv)
+
+rv.order <- as.data.frame(rv[order(-rv$`pca[["plot_env"]][["rv"]]`), ])
+rv.order <- head(rv.order, 20)
+
+df <- rv.order
+df$order <- 1:20
+
+ggplot(df, aes(x = df$order, y = df$`pca[["plot_env"]][["rv"]]`)) +
+  geom_point() +
+  geom_text_repel(aes(label = rownames(df)))+labs(x="Gene Rank",y="Percent Variance Explained",
+               title="Top 20 Genes by Variation Explained")
+
+#ggsave("~/BULK_RNA_SEQ/AA/Top 20 Genes by Variation Explained.png")
+```
+
+```{r}
+sigs <- sigs[order(sigs$stat, decreasing = TRUE),]
+sigs
+
+
+rlog_out <- rlog(dds, blind = FALSE)
+rlog_out
+mat <- assay(rlog_out[rownames(sigs), rownames(coldata)])
+base_mean <- rowMeans(mat)
+mat.scaled <- t(apply(mat, 1, scale))
+
+num_keep <- 25
+rows_keep <- c(seq(1:num_keep), seq((nrow(mat.scaled)-num_keep+1), nrow(mat.scaled)))
+rows_keep
+kept <- mat.scaled[rows_keep,]
+
+l2_val <- as.matrix(sigs[rows_keep,]$log2FoldChange)
+colnames(l2_val) <- "log2FC"
+
+mean <- as.matrix(sigs[rows_keep,]$baseMean)
+colnames(mean) <- "AvgExp"
+
+color.log2FC <- colorRamp2(c(min(l2_val), 0, max(l2_val)), c("blue", "white", "red"))
+color.AvgExp <- colorRamp2(c(quantile(mean)[1], quantile(mean)[4]), c("blue", "red"))
+
+#ha <- HeatmapAnnotation(summary = anno_summary(gp = gpar(fill = 2), height = unit(2, "cm")))
+h1 <- Heatmap(mat.scaled[rows_keep,], cluster_rows = F, column_labels = colnames(mat), name = "Z-score", cluster_columns = T)
+h1
+h2 <- Heatmap(l2_val, row_labels = rownames(kept), cluster_rows = F, name = "log2FC", #top_annotation = ha, 
+              col = color.log2FC, cell_fun = function(j,i,x,y,w,h,col){grid.text(round(l2_val[i,j],2), x, y)})
+h2
+h3 <- Heatmap(mean, row_labels = rownames(kept), cluster_rows = F, name = "AvgExp", col = color.AvgExp, cell_fun = function(j,i,x,y,w,h,col){grid.text(round(mean[i,j],2), x, y)})
+h3
+
+h <- h1+h2+h3
+h
+png("figs/complex_heatmap.png", width = 3000, height = 5500, res = 300)
+print(h)
+dev.off()
+```
+
+
+```{r}
+up <- subset(res.table, log2FoldChange >0 & padj < 0.01)
+down <- subset(res.table, log2FoldChange <0 & padj < 0.01)
+genes_to_test <- rownames(res.table)
+
+GO_results.up <- enrichGO(gene = rownames(up), OrgDb = "org.Mm.eg.db", keyType = "SYMBOL", ont = "ALL", universe = genes_to_test)
+GO_results.down <- enrichGO(gene = rownames(down), OrgDb = "org.Mm.eg.db", keyType = "SYMBOL", ont = "ALL", universe = genes_to_test)
+
+fit <- plot(barplot(GO_results.up, showCategory = 5,font.size = 15))
+png('figs/GO_results.up.png', res = 250, width = 4000, height = 3000)
+print(fit)
+dev.off()
+fit <- plot(barplot(GO_results.down, showCategory = 5, font.size = 15))
+png('figs/GO_results.down.png', res = 250, width = 4000, height = 3000)
+print(fit)
+dev.off()
+
+#Gamma?
+
+gamma <- grep("gamma", x = GO_results.up@result[["Description"]])
+gamma2 <- GO_results.up[gamma,]
+immune <- grep("immune", x = GO_results.up@result[["Description"]])
+immune2 <- GO_results.up[immune,]
+```
+
+```{r}
+### Volcano Plot
+volcano <- EnhancedVolcano(res.table, x="log2FoldChange", y="padj", lab = rownames(res.table), 
+                          xlim = c(-5,5), 
+                          #ylim = c(0,25), 
+                           col=c('black', 'black', 'black', 'red3'), selectLab = c("Fgl2",
+"Cxcr3",
+"Klrg1",
+"Tigit",
+"Ccr5",
+"Ccr2",
+"Cxcr5",
+"Itgae",
+"Havcr2",
+"Tbx21",
+"Mki67",
+"Mcl8"))+geom_label_repel()
+
+
+volcano <- EnhancedVolcano(res.table, x = "log2FoldChange", y = "padj", lab = rownames(res.table), labSize = 0,
+                           xlim = c(-5, 5), col = c('black', 'black', 'black', 'red3'))
+
+# Extract the ggplot object from the EnhancedVolcano plot
+volcano_ggplot <- volcano
+
+# Add labels for specific points
+selected_labels <- c("Fgl2", "Cxcr3", "Klrg1", "Tigit", "Ccr5", "Ccr2", "Cxcr5", "Itgae", "Havcr2", "Tbx21", "Mki67", "Ccl8")
+
+volcano_ggplot +
+  geom_label_repel(data = volcano$data[volcano$data$lab %in% selected_labels, ],
+                   aes(x = log2FoldChange, y = -log10(padj), label = lab),
+                   box.padding = 0.5,
+                   point.padding = 1,
+                   segment.color = "red",
+                   segment.size = 0.5,
+                   segment.curvature = 0.2,
+                   max.overlaps = Inf,
+                   nudge_x = 0.2)
+
+png('figs/volcano.png', res = 250, width = 2000, height = 2000)
+volcano_ggplot +
+  geom_label_repel(data = volcano$data[volcano$data$lab %in% selected_labels, ],
+                   aes(x = log2FoldChange, y = -log10(padj), label = lab),
+                   box.padding = 0.5,
+                   point.padding = 1,
+                   segment.color = "blue",
+                   segment.size = 0.5,
+                   segment.curvature = 0,
+                   max.overlaps = Inf,
+                   nudge_x = 0, force_pull = 0)
+dev.off()
+
+volcano.ss <- EnhancedVolcano(res.table, x="log2FoldChange", y="padj", lab = rownames(res.table), labSize = 4, xlim = c(1,4), ylim = c(2,25), pCutoff = 1e-03, FCcutoff = 1, col=c('black', 'black', 'black', 'red3'))
+png('figs/volcano.ss.png', res = 250, width = 2000, height = 2000)
+print(volcano.ss)
+dev.off()
+
+volcano
+volcano.ss
+
+dif.volcano <- as.data.frame(res.table@listData)
+rownames(dif.volcano) <- rownames(res.table)
+write.csv(x = dif.volcano, file = "results.all.csv")
+
+volcano.sig <- subset(dif.volcano, log2FoldChange > 1 & padj < .00001)
+write.csv(x = volcano.sig, file = "results.sig.csv")
+
+
+```
+
+
+
+
+
+
+
+```{r}
+######## GSEA ######
+res.table <- res[order(-res$stat),]
+gene_list <- res.table$stat
+names(gene_list) <- rownames(res.table)
+gene_list
+
+gse <- gseGO(geneList = gene_list, ont = "BP", keyType = "SYMBOL", OrgDb = "org.Mm.eg.db", eps = 1e-300)
+gse2 <- as.data.frame(gse)
+
+sigs <- sigs[order(-sigs$stat),]
+gene_list2 <- sigs$stat
+names(gene_list2) <- rownames(sigs)
+gene_list2
+
+gse.sigs <- gseGO(geneList = gene_list2, ont = "BP", keyType = "SYMBOL", OrgDb = "org.Mm.eg.db", eps = 1e-300)
+gse2.sigs <- as.data.frame(gse.sigs)
+
+
+#TOP 3
+tmp <- gseaplot(gse, geneSetID = "GO:0006954", title = "inflammatory_response")
+png("inflammatory_response.png", width = 2000, height = 2000, res = 250)
+print(tmp)
+dev.off()
+
+tmp <- gseaplot(gse, geneSetID = "GO:0050865", title = "regulation_of_cell_activation")
+png("regulation_of_cell_activation.png", width = 2000, height = 2000, res = 250)
+print(tmp)
+dev.off()
+
+tmp <- gseaplot(gse, geneSetID = "GO:0009617", title = "response_to_bacterium")
+png("response_to_bacterium.png", width = 2000, height = 2000, res = 250)
+print(tmp)
+dev.off()
+
+```
+
+
+```{r}
+#DecoupleR
+
+inputs_dir <- system.file("extdata", package = "decoupleR")
+data <- readRDS(file.path(inputs_dir, "bk_data.rds"))
+
+# Remove NAs and set row names
+counts <- data$counts %>%
+  dplyr::mutate_if(~ any(is.na(.x)), ~ if_else(is.na(.x),0,.x)) %>% 
+  column_to_rownames(var = "gene") %>% 
+  as.matrix()
+head(counts)
+
+# Extract t-values per gene
+deg <- data$limma_ttop %>%
+    select(ID, logFC, t, P.Value) %>% 
+    filter(!is.na(t)) %>% 
+    column_to_rownames(var = "ID") %>%
+    as.matrix()
+head(deg)
+
+
+net <- decoupleR::get_collectri(organism = "mouse", split_complexes = FALSE)
+
+n_genes <- net %>%
+  group_by(source) %>%
+  summarize(n = n())
+
+ggplot(data=n_genes, aes(x=n)) +
+  geom_density() +
+  theme(text = element_text(size=12)) +
+  xlab('Number of target genes') +
+  ylab('densities') +
+  theme_bw() +
+  theme(legend.position = "none")
+
+
+Counts <- as.matrix(Counts)
+colnames(Counts) <- c("AA_1", "AA_2", "AA_3", "AA_4", "UA_1", "UA_2", "UA_3", "UA_4")
+
+vst.Counts <- vsdata@assays@data@listData[[1]]
+intersect(rownames(vst.Counts), net$target)
+vst.Counts <- as.data.frame(vst.Counts)
+vst.Counts$gene <- rownames(vst.Counts)
+vst.Counts$gene <- toupper(vst.Counts$gene)
+rownames(vst.Counts) <- vst.Counts$gene
+vst.Counts$gene <- NULL
+vst.Counts <- as.matrix(vst.Counts)
+
+
+# Run wmean
+# Run wmean
+sample_acts <- run_wmean(mat=vst.Counts, net=net, .source='source', .target='target',.mor='mor', times = 100, minsize = 3)
+sample_acts
+
+# Transform to wide matrix
+sample_acts_mat <- sample_acts %>%
+  filter(statistic == 'norm_wmean') %>%
+  pivot_wider(id_cols = 'condition', names_from = 'source',
+              values_from = 'score') %>%
+  column_to_rownames('condition') %>%
+  as.matrix()
+
+#Play
+asdf <- t(sample_acts_mat)
+aa <- asdf[,1:4]
+aa <- as.data.frame(aa)
+aa$total <- rowSums(aa)
+
+ua <- asdf[,5:8]
+ua <- as.data.frame(ua)
+ua$total <- rowSums(ua)
+
+dif <- data.frame(aa$total - ua$total)
+asdf <- as.data.frame(asdf)
+asdf$dif <- dif
+asdf2 <- asdf
+
+
+
+
+asdf <- t(sample_acts_mat)
+asdf <- scale(asdf)
+aa <- asdf[,1:4]
+aa <- as.data.frame(aa)
+aa$total <- rowSums(aa)
+
+ua <- asdf[,5:8]
+ua <- as.data.frame(ua)
+ua$total <- rowSums(ua)
+
+dif <- data.frame(aa$total - ua$total)
+asdf <- as.data.frame(asdf)
+asdf$dif <- dif
+
+hist(asdf$dif$aa.total...ua.total)
+asdf <- asdf[order(-asdf$dif$aa.total...ua.total), ]
+
+tfs <- c(head(rownames(asdf), 25), tail(rownames(asdf), 25))
+
+########################
+
+
+# Get top tfs with more variable means across clusters
+#tfs <- sample_acts %>%
+  #group_by(source) %>%
+  #summarise(std = sd(score)) %>%
+ # arrange(-abs(std)) %>%
+  #head(n_tfs) %>%
+  #pull(source)
+sample_acts_mat <- sample_acts_mat[,tfs]
+
+# Scale per sample
+sample_acts_mat <- scale(sample_acts_mat)
+
+# Choose color palette
+palette_length = 100
+my_color = colorRampPalette(c("Darkblue", "white","red"))(palette_length)
+
+my_breaks <- c(seq(-3, 0, length.out=ceiling(palette_length/2) + 1),
+               seq(0.05, 3, length.out=floor(palette_length/2)))
+
+# Plot
+pheatmap(sample_acts_mat, border_color = NA, color=my_color, breaks = my_breaks) 
+png("~/TF.heatmap.png", width = 3000, height = 3000, res = 300)
+print(h)
+dev.off()
+
+######################################################################
+
+
+res$gene <- rownames(res)
+res$gene <- toupper(res$gene)
+rownames(res) <- res$gene
+res$gene <- NULL
+
+# Run wmean
+contrast_acts <- run_wmean(mat=res[, 'stat', drop=FALSE], net=net, .source='source', .target='target',
+                  .mor='mor', times = 100, minsize = 2)
+contrast_acts
+
+# Run wmean
+
+# Filter norm_wmean
+f_contrast_acts <- contrast_acts %>%
+  filter(statistic == 'norm_wmean') %>%
+  mutate(rnk = NA)
+
+# Filter top TFs in both signs
+msk <- f_contrast_acts$score > 0
+f_contrast_acts[msk, 'rnk'] <- rank(-f_contrast_acts[msk, 'score'])
+f_contrast_acts[!msk, 'rnk'] <- rank(-abs(f_contrast_acts[!msk, 'score']))
+tfs <- f_contrast_acts %>%
+  arrange(rnk) %>%
+  head(n_tfs) %>%
+  pull(source)
+f_contrast_acts <- f_contrast_acts %>%
+  filter(source %in% tfs)
+
+# Plot
+ggplot(f_contrast_acts, aes(x = reorder(source, score), y = score)) + 
+    geom_bar(aes(fill = score), stat = "identity") +
+    scale_fill_gradient2(low = "darkblue", high = "indianred", 
+        mid = "whitesmoke", midpoint = 0) + 
+    theme_minimal() +
+    theme(axis.title = element_text(face = "bold", size = 12),
+        axis.text.x = 
+            element_text(angle = 45, hjust = 1, size =10, face= "bold"),
+        axis.text.y = element_text(size =10, face= "bold"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+    xlab("Pathways")
+ggsave("~/TF.waterfall.png", height = 4, width = 8)
+
+
+tf <- 'ZNF354C'
+tf <- my.tfs
+sigs2 <- res
+sigs2 <- subset(res, baseMean > 50)
+#sigs2 <- subset(sigs2, padj < .05)
+
+for(i in seq_along(my.tfs)){
+df <- net %>%
+  filter(source == tf[i]) %>%
+  arrange(target) %>%
+  mutate(ID = target, color = "3") %>%
+  column_to_rownames('target')
+
+inter <- sort(intersect(rownames(sigs2),rownames(df)))
+df <- df[inter, ]
+sigs2 <- sigs2[,c("log2FoldChange", "pvalue", "padj")]
+df[,c('log2FoldChange', 'pvalue', 'padj')] <- sigs2[inter, ]
+df <- df %>%
+  mutate(color = if_else(mor > 0 & log2FoldChange > 0, '1', color)) %>%
+  mutate(color = if_else(mor > 0 & log2FoldChange < 0, '2', color)) %>%
+  mutate(color = if_else(mor < 0 & log2FoldChange > 0, '2', color)) %>%
+  mutate(color = if_else(mor < 0 & log2FoldChange < 0, '1', color))
+
+ggplot(df, aes(x = log2FoldChange, y = -log10(pvalue), color = color, size=abs(mor))) +
+  geom_point() +
+  scale_colour_manual(values = c("red","royalblue3","grey")) +
+  geom_label_repel(aes(label = ID, size=1), max.overlaps = 15) + 
+  theme_minimal() +
+  theme(legend.position = "none") +
+  geom_vline(xintercept = 0, linetype = 'dotted') +
+  geom_hline(yintercept = 0, linetype = 'dotted') +
+  ggtitle(tf[i]) 
+ggsave(paste0("~/tf.volcano/", tf[i], ".png"))
+}
+```
+
+#################################################################
+
+
+```{r}
+#Downstream 
+
+net <- get_progeny(organism = 'mouse', top = 100)
+net$target.up <- toupper(net$target)
+net$target <- net$target.up
+
+# Run wmean
+net$target.up <- toupper(net$target)
+net$target <- net$target.up
+sample_acts <- run_wmean(mat=vst.Counts, net=net, .source='source', .target='target.up',.mor='weight', times = 100, minsize = 5)
+sample_acts
+
+# Transform to wide matrix
+sample_acts_mat <- sample_acts %>%
+  filter(statistic == 'norm_wmean') %>%
+  pivot_wider(id_cols = 'condition', names_from = 'source',
+              values_from = 'score') %>%
+  column_to_rownames('condition') %>%
+  as.matrix()
+
+# Scale per sample
+sample_acts_mat <- scale(sample_acts_mat)
+
+# Choose color palette
+palette_length = 100
+my_color = colorRampPalette(c("Darkblue", "white","red"))(palette_length)
+
+my_breaks <- c(seq(-3, 0, length.out=ceiling(palette_length/2) + 1),
+               seq(0.05, 3, length.out=floor(palette_length/2)))
+
+# Plot
+pheatmap(sample_acts_mat_ordered, border_color = NA, color=my_color, breaks = my_breaks ) 
+###############################################
+# Run wmean
+contrast_acts <- run_wmean(mat=vst.Counts, net=net, .source='source', .target='target',
+                  .mor='weight', times = 100, minsize = 5)
+contrast_acts <- contrast_acts %>%
+  filter(statistic == 'norm_wmean') %>%
+  pivot_wider(id_cols = 'condition', names_from = 'source',
+              values_from = 'score') %>%
+  column_to_rownames('condition') %>%
+  as.matrix()
+contrast_acts <- as.data.frame(t(contrast_acts))
+
+# Scale per sample
+contrast_acts <- scale(contrast_acts)
+
+f_contrast_acts <- as.data.frame(t(contrast_acts))
+
+###########################################
+pathways <- unique(net$source)
+vst.Counts <- as.data.frame(vst.Counts)
+
+res <- subset(res, baseMean >50)
+
+for(i in seq_along(pathways)){
+df <- net %>%
+  filter(source == pathways[i]) %>%
+  arrange(target) %>%
+  mutate(ID = target, color = "3") %>%
+  column_to_rownames('target')
+inter <- sort(intersect(rownames(res),rownames(df)))
+df <- df[inter, ]
+df['stat'] <- res[inter, ]$stat
+df <- df %>%
+  mutate(color = if_else(weight > 0 & stat > 0, '1', color)) %>%
+  mutate(color = if_else(weight > 0 & stat < 0, '2', color)) %>%
+  mutate(color = if_else(weight < 0 & stat > 0, '2', color)) %>%
+  mutate(color = if_else(weight < 0 & stat < 0, '1', color))
+
+ggplot(df, aes(x = weight, y = stat, color = color)) + geom_point() +
+  scale_colour_manual(values = c("red","royalblue3","grey")) +
+  geom_label_repel(aes(label = ID), max.overlaps = 12) + 
+  theme_minimal() +
+  theme(legend.position = "none") +
+  geom_vline(xintercept = 0, linetype = 'dotted') +
+  geom_hline(yintercept = 0, linetype = 'dotted') +
+  ggtitle(pathways[i])
+ggsave(paste0("~/pathways/", pathways[i], ".png"))
+}
+
+
+sources <- unique(net$source)
+df2 <- data.frame(row.names = c("source", "score"))
+
+for(i in seq_along(sources)){
+tmp <- sources[i]
+source.1 <- subset(net, source == tmp)
+source.1 <- source.1[,2:3]
+source.1.tbl <- vst.Counts[source.1$target,]
+source.1.tbl$weight <- source.1$weight
+source.1.tbl <- na.omit(source.1.tbl)
+source.1.tbl <- source.1.tbl[,1:8]*source.1.tbl$weight
+source.1.aa <- source.1.tbl[,1:4]
+source.1.ua <- source.1.tbl[,5:8]
+source.1.aa$total <- rowSums(source.1.aa)
+source.1.ua$total <- rowSums(source.1.ua)
+source.1.tbl$dif <- source.1.aa$total - source.1.ua$total
+source.1.tbl$rank <- c(1:nrow(source.1.tbl))
+ggplot(source.1.tbl, aes(x = rank, y = dif)) + 
+    geom_bar(aes(fill = dif), stat = "identity")
+source.1.tbl.order <- source.1.tbl[order(-source.1.tbl$dif),]
+source.1.tbl.order$rank <- c(1:nrow(source.1.tbl))
+score <- round(sum(source.1.tbl.order$dif), digits = 1)
+ggplot(source.1.tbl.order, aes(x = rank, y = dif)) + 
+    geom_bar(aes(fill = dif), stat = "identity")+
+    ggtitle(paste0(tmp, ".score=", score))
+ggsave(paste0("~/pathways/pathways.waterfall/", tmp, ".png"))
+df <- data.frame(tmp, score)
+df2 <- rbind(df2,df)
+}
+#####################################################
+df2 <- data.frame(row.names = c("source", "score"))
+for(i in seq_along(sources)){
+tmp <- sources[i]
+source.1 <- subset(net, source == tmp)
+source.1 <- source.1[,2:3]
+source.1$rank <- c(1:nrow(source.1))
+source.1.tbl <- vst.Counts[source.1$target,]
+source.1.tbl$weight <- source.1$weight
+source.1.tbl$rank <- source.1$rank
+source.1.tbl <- na.omit(source.1.tbl)
+source.1.tbl <- source.1.tbl[,1:8]/log(source.1.tbl$rank+1)
+source.1.aa <- source.1.tbl[,1:4]
+source.1.ua <- source.1.tbl[,5:8]
+source.1.aa$total <- rowSums(source.1.aa)
+source.1.ua$total <- rowSums(source.1.ua)
+source.1.tbl$dif <- source.1.aa$total - source.1.ua$total
+source.1.tbl$rank <- c(1:nrow(source.1.tbl))
+ggplot(source.1.tbl, aes(x = rank, y = dif)) + 
+    geom_bar(aes(fill = dif), stat = "identity")
+source.1.tbl.order <- source.1.tbl[order(-source.1.tbl$dif),]
+source.1.tbl.order$rank <- c(1:nrow(source.1.tbl))
+score <- round(sum(source.1.tbl.order$dif), digits = 1)
+ggplot(source.1.tbl.order, aes(x = rank, y = dif)) + 
+    geom_bar(aes(fill = dif), stat = "identity")+
+    ggtitle(paste0(tmp, ".score=", score))
+ggsave(paste0("~/pathways/pathways.div.waterfall/", tmp, ".png"))
+df <- data.frame(tmp, score)
+df2 <- rbind(df2,df)
+}
+
+df2.order <- df2[order(-df2$score),]
+df2.order$tmp <- as.character(df2.order$tmp)
+#Then turn it back into a factor with the levels in the correct order
+df2.order$tmp <- factor(df2.order$tmp, levels=unique(df2.order$tmp))
+df2.order$Source <- df2.order$tmp
+
+ggplot(df2.order, aes(x = Source, y = score)) + 
+    geom_bar(aes(fill = score), stat = "identity")+
+    theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
+ggsave("~/pathways/pathways.div.waterfall/all.png")
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+#Sam requested heatmaps
+rna <- as.data.frame(rownames(Counts))
+
+TFs <- c("Tbx21", "Gata3", "Rorc", "Bcl6", "Eomes", "Runx3", "Id2", "Stat1", "Stat3", "Stat4", "Stat5a", "Stat5b", "Stat6")
+length(TFs)
+
+TFs.heatmap <- subset(vst.Counts, rownames(vst.Counts) %in% TFs)
+length(TFs) == nrow(TFs.heatmap)
+TFs.heatmap <- t(apply(TFs.heatmap, 1, scale))
+
+column_groups <- c(rep("AA", 4), rep("UA", 4))  # Assign groups to columns
+column_groups <- c("AA1","AA2","AA3","AA4","UA1","UA2","UA3","UA4")
+row_groups <- c(1:nrow(TFs.heatmap))
+
+h1 <- Heatmap(matrix = TFs.heatmap, cluster_columns = F, cluster_rows = T, heatmap_legend_param = list(title = "z-score", legend_height = unit(10, "cm"), legend_width = unit(20, "cm")), column_names_gp = gpar(fontsize = 30), row_names_gp = gpar(fontsize = 30), heatmap_width = unit(20, "cm"), heatmap_height = unit(1.5*nrow(TFs.heatmap), "cm"), show_row_dend = F, border = list(color = "black", width = c(1, 1)), rect_gp = gpar(col = "black", lwd = 1), column_split = column_groups, show_column_names = F, column_gap = unit(.1, "cm"), column_title_gp = gpar(fontsize = 30), row_split = row_groups, row_gap = unit(.1, "cm"), column_labels = c(rep("AA", 4), rep("UA", 4)))
+png("figs/TFs.heatmap.png", width = 3000, height = 3000, res = 300)
+print(h1)
+dev.off()
+
+#####################
+
+chemokine.and.receptors <- c("Cxcr3", "Cxcr5", "Cxcr6", "Ccr4", "Ccr6", "Ccr7", "Ccr10", "Xcl1", "Ccl1", "Ccl3", "Ccl4", "Ccl5")
+
+chemokine.receptors.heatmap <- subset(vst.Counts, rownames(vst.Counts) %in% chemokine.and.receptors)
+length(chemokine.and.receptors) == nrow(chemokine.receptors.heatmap)
+chemokine.receptors.heatmap <- t(apply(chemokine.receptors.heatmap, 1, scale))
+
+h1 <- Heatmap(matrix = chemokine.receptors.heatmap, column_labels = c(rep("AA", 4), rep("UA", 4)), cluster_columns = F, cluster_rows = T, heatmap_legend_param = list(title = "z-score", legend_height = unit(5, "cm"),  legend_width = unit(10, "cm")), column_names_gp = gpar(fontsize = 30), row_names_gp = gpar(fontsize = 30), heatmap_width = unit(20, "cm"), heatmap_height = unit(1.5*nrow(chemokine.receptors.heatmap), "cm"), show_row_dend = F, border = list(color = "black", width = c(1, 1)), rect_gp = gpar(col = "black", lwd = 1), column_split = column_groups, show_column_names = F, column_gap = unit(1, "cm"), column_title_gp = gpar(fontsize = 30))
+png("figs/chemokine.receptors.heatmap.png", width = 3000, height = 3000, res = 300)
+print(h1)
+dev.off()
+
+#####################
+
+Cytokines.and.R <- c("Il2ra", "Il2rb", "Il7r", "Il12rb1", "Il12rb2", "Il18r1", "Il6ra", "Ifng", "Il2", "Il3", "Il4", "Il5", "Il13", "Il17a", "Il21", "Il22", "Prf1", "Gzma", "Gzmb", "Tnf")
+
+Cytokines.R.heatmap <- subset(vst.Counts, rownames(vst.Counts) %in% Cytokines.and.R)
+length(Cytokines.and.R) == nrow(Cytokines.R.heatmap)
+Cytokines.R.heatmap <- t(apply(Cytokines.R.heatmap, 1, scale))
+
+h1 <- Heatmap(matrix = Cytokines.R.heatmap, column_labels = c(rep("AA", 4), rep("UA", 4)), cluster_columns = F, cluster_rows = T, heatmap_legend_param = list(title = "z-score", legend_height = unit(5, "cm"),  legend_width = unit(10, "cm")), column_names_gp = gpar(fontsize = 30), row_names_gp = gpar(fontsize = 30), heatmap_width = unit(20, "cm"), heatmap_height = unit(1.5*nrow(Cytokines.R.heatmap), "cm"), show_row_dend = F, border = list(color = "black", width = c(1, 1)), rect_gp = gpar(col = "black", lwd = 1), column_split = column_groups, show_column_names = F, column_gap = unit(1, "cm"), column_title_gp = gpar(fontsize = 30))
+png("figs/Cytokines.R.heatmap.png", width = 3000, height = 3000, res = 300)
+print(h1)
+dev.off()
+
+#####################
+
+Misc.markers <- c("Cd44", "Cd40lg", "Cd69", "Cd28", "Itgae", "Ctla4", "Pdcd1", "Havcr2", "Klrg1", "Mki67", "Lag3", "Cd244a", "Cd48", "Tnfrsf4", "Icos", "Tnfrsf9", "Fasl", "Tnfrsf10b")
+
+Misc.markers.heatmap <- subset(vst.Counts, rownames(vst.Counts) %in% Misc.markers)
+length(Misc.markers) == nrow(Misc.markers.heatmap)
+Misc.markers.heatmap <- t(apply(Misc.markers.heatmap, 1, scale))
+
+h1 <- Heatmap(matrix = Misc.markers.heatmap, column_labels = c(rep("AA", 4), rep("UA", 4)), cluster_columns = F, cluster_rows = T, heatmap_legend_param = list(title = "z-score", legend_height = unit(5, "cm"),  legend_width = unit(10, "cm")), column_names_gp = gpar(fontsize = 30), row_names_gp = gpar(fontsize = 30), heatmap_width = unit(20, "cm"), heatmap_height = unit(1.2*nrow(Misc.markers.heatmap), "cm"), show_row_dend = F, border = list(color = "black", width = c(1, 1)), rect_gp = gpar(col = "black", lwd = 1), column_split = column_groups, show_column_names = F, column_gap = unit(1, "cm"), column_title_gp = gpar(fontsize = 30))
+png("figs/Misc.markers.heatmap.png", width = 3000, height = 3000, res = 300)
+print(h1)
+dev.off()
+
+#####################
+
+Self.renewal <- c("Tcf7", "Lef1", "Id3", "Kit", "Sell", "Prickle1", "Axin2")
+
+Self.renewal.heatmap <- subset(vst.Counts, rownames(vst.Counts) %in% Self.renewal)
+length(Self.renewal) == nrow(Self.renewal.heatmap)
+Self.renewal.heatmap <- t(apply(Self.renewal.heatmap, 1, scale))
+
+h1 <- Heatmap(matrix = Self.renewal.heatmap, column_labels = c(rep("AA", 4), rep("UA", 4)), cluster_columns = F, cluster_rows = T, heatmap_legend_param = list(title = "z-score", legend_height = unit(5, "cm"),  legend_width = unit(10, "cm")), column_names_gp = gpar(fontsize = 30), row_names_gp = gpar(fontsize = 30), heatmap_width = unit(20, "cm"), heatmap_height = unit(1.5*nrow(Self.renewal.heatmap), "cm"), show_row_dend = F, border = list(color = "black", width = c(1, 1)), rect_gp = gpar(col = "black", lwd = 1), column_split = column_groups, show_column_names = F, column_gap = unit(1, "cm"), column_title_gp = gpar(fontsize = 30))
+png("figs/Self.renewal.heatmap.png", width = 3000, height = 3000, res = 300)
+print(h1)
+dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+GS <- getGenesets(org = "mmu", db = c("go", "kegg", "msigdb", "enrichr"))
+GS.go <- getGenesets(org = "mmu", db = "go")
+
+path.list <- c("HALLMARK_IL2_STAT5_SIGNALING", "HALLMARK_IL6_JAK_STAT3_SIGNALING", "HALLMARK_INFLAMMATORY_RESPONSE", "HALLMARK_INTERFERON_ALPHA_RESPONSE", "HALLMARK_INTERFERON_GAMMA_RESPONSE")
+
+path.list <- c("HALLMARK_ESTROGEN_RESPONSE_EARLY", "HALLMARK_GLYCOLYSIS", "HALLMARK_OXIDATIVE_PHOSPHORYLATION", "HALLMARK_FATTY_ACID_METABOLISM", "HALLMARK_TNFA_SIGNALING_VIA_NFKB")
+
+x <- as.vector("x")
+
+for(i in seq_along(path.list)){
+  tmp <- path.list[i]
+  tmp2 <- GS.hallmark[[tmp]]@geneIds
+  asdf <- subset(mat.z, rownames(mat.z) %in% tmp2)
+
+  mat.z.play <- mat.z
+  mat.z.play <- as.data.frame(mat.z.play)
+  mat.z.play$name <- rownames(mat.z.play)
+  mat.z.play$name <- tolower(mat.z.play$name)
+  tmp2 <- tolower(tmp2)
+
+  tmp2genes <- intersect(tmp2, mat.z.play$name)
+  asdf <- filter(mat.z.play, name %in% tmp2)
+  asdf <- asdf[,-9]
+  heatmap <- Heatmap(asdf, cluster_rows = T, cluster_columns = T, column_labels = colnames(asdf), name =    "Z-score")
+  png(paste0("~/BULK_RNA_SEQ/AA/output.12.1.22/heatmap.", tmp, ".png"), height = 1500, width = 450)
+  print(heatmap)
+  dev.off()
+  
+  x <- append(x, values = tmp2genes)
+}
+
+x <- as.data.frame(x)
+x$order <- 0:211
+colnames(x) <- c("name", "order")
+
+
+asdf <- filter(mat.z.play, name %in% x$name)
+merge <- merge(x = asdf, y = x)
+merge <- merge[order(merge$order),]
+list <- as.vector(merge$name)
+merge <- merge[,-10]
+merge <- merge[,-1]
+x <- x[-1,]
+merge$name <- x$name
+rownames(merge) <- x$name
+
+list <- rep(path.list[1], 79)
+list2 <- rep(path.list[2], 26)
+list3 <- rep(path.list[3], 51)
+list4 <- rep(path.list[4], 12)
+list5 <- rep(path.list[5], 43)
+
+list <- c(list, list2, list3, list4, list5)
+
+merge$pathway <- list
+merge$pathway[2:79] = ""
+merge$pathway[81:105] = ""
+merge$pathway[107:156] = ""
+merge$pathway[158:168] = ""
+merge$pathway[170:211] = ""
+
+order <- as.vector(merge$name)
+
+
+heatmap <- Heatmap(merge[,1:8], cluster_rows = F, cluster_columns = T, column_labels = c(rep("AA", 4), rep("UA", 4)), name = "Z-score", row_labels = merge$pathway)
+png("~/BULK_RNA_SEQ/AA/output.12.1.22/heatmap.allpathways.png", height = 1000, width = 450)
+print(heatmap)
+dev.off()
+
+
+heatmap <- Heatmap(mat.z, cluster_rows = T, cluster_columns = T, column_labels = c(rep("AA", 4), rep("UA", 4)), name = "Z-score", row_labels = rep("", 1567))
+png("~/BULK_RNA_SEQ/AA/output.12.1.22/heatmap.allsig.genes.png", height = 1000, width = 450)
+print(heatmap)
+dev.off()
+
+
+
+
+
+
+
+```
+
+
+
+```{r}
+###########################################################
+#############         GSEA
+
+res <- res[order(-res$stat),]
+res <- as.data.frame(res)
+gene_list <- res$stat
+names(gene_list) <- rownames(res)
+gene_list
+gse <- gseGO(geneList = gene_list, ont = "BP", keyType = "SYMBOL", OrgDb = "org.Mm.eg.db", eps = 1e-300)
+
+gse2 <- as.data.frame(gse)
+gse2.upregulated <- subset(gse2, enrichmentScore >0)
+
+#TOP 3
+tmp <- gseaplot(gse, geneSetID = "GO:0006954", title = "inflammatory_response")
+png("~/BULK_RNA_SEQ/AA/output.12.1.22/inflammatory_response.png", width = 2000, height = 2000, res = 250)
+print(tmp)
+dev.off()
+
+tmp <- gseaplot(gse, geneSetID = "GO:0050865", title = "regulation_of_cell_activation")
+png("~/BULK_RNA_SEQ/AA/output.12.1.22/regulation_of_cell_activation.png", width = 2000, height = 2000, res = 250)
+print(tmp)
+dev.off()
+
+tmp <- gseaplot(gse, geneSetID = "GO:0009617", title = "response_to_bacterium")
+png("~/BULK_RNA_SEQ/AA/output.12.1.22/response_to_bacterium.png", width = 2000, height = 2000, res = 250)
+print(tmp)
+dev.off()
+
+################################################################################
+#################   Create Desired GSEAs below    ##############################
+################################################################################
+tmp <- gseaplot(gse, geneSetID = "GO:0032609", title = "interferon-gamma_production")
+png("~/BULK_RNA_SEQ/AA/output.12.1.22/interferon-gamma_production.png", width = 2000, height = 2000, res = 250)
+print(tmp)
+dev.off()
+
+tmp <- gseaplot(gse, geneSetID = "GO:0034341", title = "response_to_interferon-gamma")
+png("~/BULK_RNA_SEQ/AA/output.12.1.22/response_to_interferon-gamma.png", width = 2000, height = 2000, res = 250)
+print(tmp)
+dev.off()
+
+
+
+tmp <- gseaplot(gse, geneSetID = "GO:0002399", title = "MHC2_protein_complex_assembly")
+png("~/BULK_RNA_SEQ/AA/output.12.1.22/MHC2_protein_complex_assembly.png", width = 2000, height = 2000, res = 250)
+print(tmp)
+dev.off()
+
+
+tmp <- gseaplot(gse, geneSetID = "GO:0006954", title = "inflammatory_response")
+png("~/BULK_RNA_SEQ/AA/output.12.1.22/inflammatory_response.png", width = 2000, height = 2000, res = 250)
+print(tmp)
+dev.off()
+
+################################
+#Or sort based on enrichment and look at top
+
+gse2 <- gse2[order(-gse2$enrichmentScore), ]
+write_csv(gse2, file = "~/BULK_RNA_SEQ/AA/output.12.1.22/GSEA.scores.csv")
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
