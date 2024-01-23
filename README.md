@@ -11,12 +11,9 @@
 Welcome to my project! Click the logo to visit GitHub.
 
 <p align="center">
-  <img src="[path/to/local-image.png](https://github.com/ryanreis333/AA_CD4_bulkRNAseq/assets/16333059/578b56e1-573a-489b-843a-1e0608b9ef96)" alt="Local Image" width="300" height="200">
+  <img src="https://github.com/ryanreis333/AA_CD4_bulkRNAseq/assets/16333059/578b56e1-573a-489b-843a-1e0608b9ef96" alt="PCA" width="300" height="200">
 </p>
 
-
-
-![image](https://github.com/ryanreis333/AA_CD4_bulkRNAseq/assets/16333059/578b56e1-573a-489b-843a-1e0608b9ef96) src="URL" alt="Alt text" width="200" height="200"
 
 ![image](https://github.com/ryanreis333/AA_CD4_bulkRNAseq/assets/16333059/8e5751cb-5c4f-43cf-af92-f81d8cca5331)
 
